@@ -1,9 +1,13 @@
+import uvicorn
 from fastapi import FastAPI, HTTPException, Depends
+from pymongo.errors import OperationFailure
 from sqlalchemy import create_engine, Column, Integer, DateTime, String, func
-from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 from pymongo import MongoClient
 from pydantic import BaseModel
+import random
+from datetime import datetime
 import uuid
 
 # --------------------------- SQLAlchemy Setup (MSSQL) ---------------------------
@@ -32,6 +36,7 @@ MONGO_URI = "mongodb://localhost:27017"
 mongo_client = MongoClient(MONGO_URI)
 mongo_db = mongo_client["mydatabase"]
 mongo_collection = mongo_db["users"]
+transactions_collection = mongo_db["transactions"]  # Create or get transactions collection
 
 # --------------------------- Pydantic Models ---------------------------
 
@@ -48,7 +53,7 @@ class UserResponse(BaseModel):
     phone: str
 
     class Config:
-        orm_mode = True  # Enables compatibility with ORM models
+        from_attributes = True  # Enables compatibility with ORM models
 
 
 # --------------------------- FastAPI App Setup ---------------------------
@@ -117,14 +122,15 @@ def update_user_sql(user_id: int, request: UserCreateRequest, db: Session = Depe
     return user
 
 
-# --------------------------- MongoDB CRUD Operations ---------------------------
+## --------------------------- MongoDB CRUD Operations ---------------------------
 
 @app.post("/users/mongo/", response_model=UserResponse)
 def create_user_mongo(request: UserCreateRequest):
-    """Create a new user in MongoDB"""
+    """Create a new user in MongoDB with associated transactions"""
     if mongo_collection.find_one({"email": request.email}):
         raise HTTPException(status_code=400, detail="Email already exists.")
 
+    # User data
     user_data = {
         "_id": str(uuid.uuid4()),  # Use UUID for MongoDB IDs
         "name": request.name,
@@ -132,116 +138,293 @@ def create_user_mongo(request: UserCreateRequest):
         "phone": request.phone
     }
 
-    mongo_collection.insert_one(user_data)
-    return user_data
+    # Transactions related to the user
+    transaction_types = ["credit", "debit"]
+    statuses = ["success", "pending", "failed"]
+
+    # Possible transaction data for this user
+    transactions = []
+    for _ in range(5):
+        transaction = {
+            "_id": str(uuid.uuid4()),  # Unique ID for each transaction
+            "user_id": user_data["_id"],  # Reference to the user
+            "amount": round(random.uniform(10, 5000), 2),
+            "transaction_type": random.choice(transaction_types),
+            "status": random.choice(statuses),
+            "timestamp": datetime.utcnow(),
+        }
+        transactions.append(transaction)
+
+    # Log user and transaction creation process
+    print("Inserting user data into MongoDB...")
+    print(f"User data: {user_data}")
+
+    try:
+        # Using transaction to insert both user and related transactions in MongoDB
+        with mongo_client.start_session() as session:
+            session.start_transaction()
+            try:
+                # Inserting user data into MongoDB
+                print("Inserting user into MongoDB...")
+                mongo_collection.insert_one(user_data, session=session)
+                print(f"User inserted: {user_data}")
+
+                # Inserting transactions into MongoDB
+                print("Inserting transactions into MongoDB...")
+                result = transactions_collection.insert_many(transactions, session=session)
+                print(f"{len(transactions)} transactions inserted.")
+
+                # Commit the transaction
+                session.commit_transaction()
+                print("Transaction committed successfully.")
+
+            except OperationFailure as e:
+                # If something fails, abort the transaction
+                session.abort_transaction()
+                print(f"Transaction aborted due to error: {str(e)}")
+                raise HTTPException(status_code=500, detail=f"Error creating user and transactions: {str(e)}")
+
+        return {"message": "User and Transactions inserted successfully", "user": user_data, "transactions": transactions}
+
+    except Exception as e:
+        # Log any other errors
+        print(f"Transaction failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
 
 
-@app.get("/users/mongo/{user_id}", response_model=UserResponse)
-def get_user_mongo(user_id: str):
-    """Fetch a user from MongoDB"""
-    user = mongo_collection.find_one({"_id": user_id})
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+# --------------------------- MongoDB CRUD Operations for Verification ---------------------------
 
-    return UserResponse(id=user["_id"], name=user["name"], email=user["email"], phone=user["phone"])
+# @app.get("/users/mongo/{user_id}", response_model=UserResponse)
+# def get_user_mongo(user_id: str):
+#     """Fetch a user from MongoDB"""
+#     user = mongo_collection.find_one({"_id": user_id})
+#     if not user:
+#         raise HTTPException(status_code=404, detail="User not found")
+#
+#     # Log the user retrieval
+#     print(f"User found in MongoDB: {user}")
+#     return UserResponse(id=user["_id"], name=user["name"], email=user["email"], phone=user["phone"])
+#
+#
+# @app.get("/transactions/mongo/{user_id}", response_model=list)
+# def get_transactions_mongo(user_id: str):
+#     """Fetch transactions related to a user from MongoDB"""
+#     transactions = transactions_collection.find({"user_id": user_id})
+#     if not transactions:
+#         raise HTTPException(status_code=404, detail="Transactions not found")
+#
+#     # Log the transaction retrieval
+#     print(f"Transactions found for user {user_id}: {list(transactions)}")
+#     return list(transactions)
+#
+#
+# @app.get("/users/mongo/{user_id}", response_model=UserResponse)
+# def get_user_mongo(user_id: str):
+#     """Fetch a user from MongoDB"""
+#     user = mongo_collection.find_one({"_id": user_id})
+#     if not user:
+#         raise HTTPException(status_code=404, detail="User not found")
+#
+#     return UserResponse(id=user["_id"], name=user["name"], email=user["email"], phone=user["phone"])
+#
+#
+# @app.delete("/users/mongo/{user_id}", response_model=dict)
+# def delete_user_mongo(user_id: str):
+#     """Delete a user from MongoDB"""
+#     result = mongo_collection.delete_one({"_id": user_id})
+#     if result.deleted_count == 0:
+#         raise HTTPException(status_code=404, detail="User not found")
+#     return {"message": "User deleted successfully"}
+#
+#
+# @app.put("/users/mongo/{user_id}", response_model=UserResponse)
+# def update_user_mongo(user_id: str, request: UserCreateRequest):
+#     """Update user details in MongoDB"""
+#     user = mongo_collection.find_one({"_id": user_id})
+#     if not user:
+#         raise HTTPException(status_code=404, detail="User not found")
+#
+#     updated_user = {
+#         "name": request.name,
+#         "email": request.email,
+#         "phone": request.phone
+#     }
+#
+#     mongo_collection.update_one({"_id": user_id}, {"$set": updated_user})
+#     return {**updated_user, "id": user_id}
 
-
-@app.delete("/users/mongo/{user_id}", response_model=dict)
-def delete_user_mongo(user_id: str):
-    """Delete a user from MongoDB"""
-    result = mongo_collection.delete_one({"_id": user_id})
-    if result.deleted_count == 0:
-        raise HTTPException(status_code=404, detail="User not found")
-    return {"message": "User deleted successfully"}
-
-
-@app.put("/users/mongo/{user_id}", response_model=UserResponse)
-def update_user_mongo(user_id: str, request: UserCreateRequest):
-    """Update user details in MongoDB"""
-    user = mongo_collection.find_one({"_id": user_id})
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
-
-    updated_user = {
+@app.post("/transactions/mongo/", response_model=dict)
+def create_transactions_mongo(request: UserCreateRequest):
+    """Create transactions in MongoDB related to a user"""
+    # User data
+    user_data = {
+        "_id": str(uuid.uuid4()),  # Use UUID for MongoDB IDs
         "name": request.name,
         "email": request.email,
         "phone": request.phone
     }
 
-    mongo_collection.update_one({"_id": user_id}, {"$set": updated_user})
-    return {**updated_user, "id": user_id}
+    # Transactions related to the user
+    transaction_types = ["credit", "debit"]
+    statuses = ["success", "pending", "failed"]
+
+    # Possible transaction data for this user
+    transactions = []
+    for _ in range(5):
+        transaction = {
+            "_id": str(uuid.uuid4()),  # Unique ID for each transaction
+            "user_id": user_data["_id"],  # Reference to the user
+            "amount": round(random.uniform(10, 5000), 2),
+            "transaction_type": random.choice(transaction_types),
+            "status": random.choice(statuses),
+            "timestamp": datetime.utcnow(),
+        }
+        transactions.append(transaction)
+
+    try:
+        # Using transaction to insert user and transactions in MongoDB
+        with mongo_client.start_session() as session:
+            session.start_transaction()
+            try:
+                # Insert user data into MongoDB
+                mongo_db["users"].insert_one(user_data, session=session)
+
+                # Insert transactions into MongoDB
+                transactions_collection.insert_many(transactions, session=session)
+
+                # Commit the transaction
+                session.commit_transaction()
+                return {"message": "Transactions inserted successfully", "user": user_data, "transactions": transactions}
+
+            except OperationFailure as e:
+                # If something fails, abort the transaction
+                session.abort_transaction()
+                raise HTTPException(status_code=500, detail=f"Error creating user and transactions: {str(e)}")
+
+    except Exception as e:
+        # Log any other errors
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
+
+@app.get("/transactions/mongo/{user_id}", response_model=list)
+def get_transactions_mongo(user_id: str):
+    """Fetch transactions related to a user from MongoDB"""
+    transactions = list(transactions_collection.find({"user_id": user_id}))
+    if not transactions:
+        raise HTTPException(status_code=404, detail="Transactions not found")
+    return transactions
+
+
+# @app.delete("/transactions/mongo/{user_id}", response_model=dict)
+# def delete_transactions_mongo(user_id: str):
+#     """Delete transactions related to a user in MongoDB"""
+#     result = transactions_collection.delete_many({"user_id": user_id})
+#     if result.deleted_count == 0:
+#         raise HTTPException(status_code=404, detail="Transactions not found")
+#     return {"message": "Transactions deleted successfully"}
+
 
 # --------------------------- Run FastAPI ---------------------------
-# Run this file with: uvicorn filename:app --reload
 
 if __name__ == "__main__":
-    # ------------------------ Execute CRUD Operations ------------------------
+    # This will start the FastAPI app and perform CRUD actions
+    uvicorn.run("script:app", host="127.0.0.1", port=8000, reload=True)
 
-    db = SessionLocal()  # Get SQL session
-
-    # 📌 1. Insert a user into SQL
+    # For testing the CRUD operations
+    # SQL CRUD
     print("Creating user in SQL...")
-    new_user = SQLUser(name="John Doe", email="john@example.com", phone="1234567890")
+    sql_user = SQLUser(name="John Doe", email="john@example.com", phone="1234567890")
+    db = SessionLocal()
+    db.add(sql_user)
+    db.commit()
+    db.refresh(sql_user)
+    print(f"User created in SQL: {sql_user.user_id}, {sql_user.name}")
 
-    # Check if the user exists first
-    if not db.query(SQLUser).filter(SQLUser.email == new_user.email).first():
-        db.add(new_user)
-        db.commit()
-        db.refresh(new_user)
-        print(f"User created in SQL: {new_user.user_id}, {new_user.name}")
-
-    # 📌 2. Read the user from SQL
     print("Fetching user from SQL...")
-    fetched_user = db.query(SQLUser).filter(SQLUser.email == "john@example.com").first()
-    if fetched_user:
-        print(f"User found in SQL: {fetched_user.user_id}, {fetched_user.name}, {fetched_user.email}")
+    sql_user = db.query(SQLUser).filter(SQLUser.user_id == sql_user.user_id).first()
+    print(f"User found in SQL: {sql_user.user_id}, {sql_user.name}, {sql_user.email}")
 
-    # 📌 3. Update the user in SQL
     print("Updating user in SQL...")
-    if fetched_user:
-        fetched_user.name = "John Updated"
-        db.commit()
-        db.refresh(fetched_user)
-        print(f"Updated User in SQL: {fetched_user.user_id}, {fetched_user.name}")
+    sql_user.name = "John Updated"
+    db.commit()
+    db.refresh(sql_user)
+    print(f"Updated User in SQL: {sql_user.user_id}, {sql_user.name}")
 
-    # 📌 4. Delete the user from SQL
     print("Deleting user from SQL...")
-    if fetched_user:
-        db.delete(fetched_user)
-        db.commit()
-        print(f"User deleted from SQL: {fetched_user.user_id}")
+    db.delete(sql_user)
+    db.commit()
+    print(f"User deleted from SQL: {sql_user.user_id}")
 
-    db.close()  # Close SQL session
-
-    # ------------------------ MongoDB CRUD ------------------------
-
-    print("Creating user in MongoDB...")
-    mongo_user = {
-        "_id": str(uuid.uuid4()),
+    # MongoDB CRUD with Transactions
+    print("Creating user and transactions in MongoDB...")
+    mongo_user_id = str(uuid.uuid4())
+    mongo_user_data = {
+        "_id": mongo_user_id,
         "name": "Alice",
         "email": "alice@example.com",
-        "phone": "9998887770"
+        "phone": "9876543210"
     }
 
-    if not mongo_collection.find_one({"email": mongo_user["email"]}):
-        mongo_collection.insert_one(mongo_user)
-        print(f"User created in MongoDB: {mongo_user['_id']}")
+    # Transactions related to the user
+    transaction_types = ["credit", "debit"]
+    statuses = ["success", "pending", "failed"]
 
-    print("Fetching user from MongoDB...")
-    fetched_mongo_user = mongo_collection.find_one({"email": "alice@example.com"})
-    if fetched_mongo_user:
-        print(f"User found in MongoDB: {fetched_mongo_user['_id']}, {fetched_mongo_user['name']}")
+    transactions = []
+    for _ in range(5):
+        transaction = {
+            "_id": str(uuid.uuid4()),
+            "user_id": mongo_user_id,
+            "amount": round(random.uniform(10, 5000), 2),
+            "transaction_type": random.choice(transaction_types),
+            "status": random.choice(statuses),
+            "timestamp": datetime.utcnow(),
+        }
+        transactions.append(transaction)
+
+    try:
+        # Using MongoDB session for transaction
+        with mongo_client.start_session() as session:
+            session.start_transaction()
+            try:
+                # Inserting user data into MongoDB
+                print("Inserting user data into MongoDB...")
+                mongo_collection.insert_one(mongo_user_data, session=session)
+
+                # Inserting transactions into MongoDB
+                print("Inserting transactions into MongoDB...")
+                transactions_collection.insert_many(transactions, session=session)
+
+                # Commit the transaction
+                session.commit_transaction()
+                print("Transaction committed successfully.")
+            except OperationFailure as e:
+                # If something fails, abort the transaction
+                session.abort_transaction()
+                print(f"Transaction aborted due to error: {str(e)}")
+                raise HTTPException(status_code=500, detail=f"Error creating user and transactions: {str(e)}")
+
+        print(f"User and transactions inserted successfully into MongoDB: {mongo_user_id}")
+
+    except Exception as e:
+        # Log any other errors
+        print(f"Transaction failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error: {str(e)}")
+
+    # Fetch and display MongoDB user and transaction
+    print("Fetching user and transactions from MongoDB...")
+    mongo_user = mongo_collection.find_one({"_id": mongo_user_id})
+    print(f"User found in MongoDB: {mongo_user['_id']}, {mongo_user['name']}")
+
+    mongo_transactions = transactions_collection.find({"user_id": mongo_user_id})
+    print(f"Transactions for User {mongo_user_id}:")
+    for transaction in mongo_transactions:
+        print(f"Transaction ID: {transaction['_id']}, Amount: {transaction['amount']}, Status: {transaction['status']}")
 
     print("Updating user in MongoDB...")
-    mongo_collection.update_one(
-        {"email": "alice@example.com"},
-        {"$set": {"name": "Alice Updated"}}
-    )
-    updated_mongo_user = mongo_collection.find_one({"email": "alice@example.com"})
-    if updated_mongo_user:
-        print(f"Updated User in MongoDB: {updated_mongo_user['_id']}, {updated_mongo_user['name']}")
+    mongo_collection.update_one({"_id": mongo_user_id}, {"$set": {"name": "Alice Updated"}})
+    print(f"Updated User in MongoDB: {mongo_user_id}, Alice Updated")
 
-    print("Deleting user from MongoDB...")
-    mongo_collection.delete_one({"email": "alice@example.com"})
-    print("User deleted from MongoDB.")
-
+    # print("Deleting user and transactions from MongoDB...")
+    # mongo_collection.delete_one({"_id": mongo_user_id})
+    # transactions_collection.delete_many({"user_id": mongo_user_id})
+    # print(f"User and transactions deleted from MongoDB.")
