@@ -1,7 +1,8 @@
 import uvicorn
 from fastapi import FastAPI, HTTPException, Depends
 from pymongo.errors import OperationFailure
-from sqlalchemy import create_engine, Column, Integer, DateTime, String, func
+from sqlalchemy import create_engine, Column, Integer, DateTime, String, func, Numeric, ForeignKey
+from sqlalchemy.dialects.mssql import UNIQUEIDENTIFIER
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 from pymongo import MongoClient
@@ -27,6 +28,30 @@ class SQLUser(Base):
     phone = Column(String, unique=True, index=True)
     created_at = Column(DateTime, default=func.now())  # Add 'created_at'
 
+class Account(Base):
+    __tablename__ = "Accounts"
+    account_id = Column(UNIQUEIDENTIFIER, primary_key=True, default=uuid.uuid4)
+    user_id = Column(UNIQUEIDENTIFIER, ForeignKey("users.user_id"), nullable=False)
+    bank_name = Column(String, nullable=False)
+    account_number = Column(String, unique=True, nullable=False)
+    ifsc_code = Column(String, nullable=False)
+    balance = Column(Numeric(12,2), default=0.00)
+    account_type = Column(String, nullable=False)  # Add this line
+
+class UPI_Mapping(Base):
+    __tablename__ = "UPI_Mappings"
+    upi_id = Column(String, primary_key=True)
+    user_id = Column(UNIQUEIDENTIFIER, ForeignKey("users.user_id"), nullable=False)
+    account_id = Column(UNIQUEIDENTIFIER, ForeignKey("Accounts.account_id"), nullable=False)
+
+class Transaction(Base):
+    __tablename__ = "Transactions"
+    txn_id = Column(UNIQUEIDENTIFIER, primary_key=True, default=uuid.uuid4)
+    sender_upi_id = Column(String, ForeignKey("UPI_Mappings.upi_id"), nullable=False)
+    receiver_upi_id = Column(String, ForeignKey("UPI_Mappings.upi_id"), nullable=False)
+    amount = Column(Numeric(12,2), nullable=False)
+    txn_status = Column(String, nullable=False)
+
 # Create tables in the database
 Base.metadata.create_all(bind=engine)
 
@@ -45,6 +70,25 @@ class UserCreateRequest(BaseModel):
     email: str
     phone: str
 
+class AccountCreateRequest(BaseModel):
+    user_id: str
+    bank_name: str
+    account_number: str
+    ifsc_code: str
+    balance: float
+    # account_type: str  # Remove this line
+
+
+class UPI_MappingRequest(BaseModel):
+    upi_id: str
+    user_id: str
+    account_id: str
+
+class TransactionRequest(BaseModel):
+    sender_upi_id: str
+    receiver_upi_id: str
+    amount: float
+    txn_status: str
 
 class UserResponse(BaseModel):
     id: str
@@ -121,6 +165,26 @@ def update_user_sql(user_id: int, request: UserCreateRequest, db: Session = Depe
     db.refresh(user)
     return user
 
+@app.post("/accounts/")
+def create_account(account: AccountCreateRequest, db: Session = Depends(get_db)):
+    db_account = Account(**account.dict())
+    db.add(db_account)
+    db.commit()
+    return {"message": "Account created", "account_id": db_account.account_id}
+
+@app.post("/upi_mappings/")
+def create_upi_mapping(upi_mapping: UPI_MappingRequest, db: Session = Depends(get_db)):
+    db_upi = UPI_Mapping(**upi_mapping.dict())
+    db.add(db_upi)
+    db.commit()
+    return {"message": "UPI Mapping created", "upi_id": db_upi.upi_id}
+
+@app.post("/transactions/")
+def create_transaction(txn: TransactionRequest, db: Session = Depends(get_db)):
+    db_txn = Transaction(**txn.dict())
+    db.add(db_txn)
+    db.commit()
+    return {"message": "Transaction created", "txn_id": db_txn.txn_id}
 
 ## --------------------------- MongoDB CRUD Operations ---------------------------
 
@@ -193,65 +257,6 @@ def create_user_mongo(request: UserCreateRequest):
 
 
 # --------------------------- MongoDB CRUD Operations for Verification ---------------------------
-
-# @app.get("/users/mongo/{user_id}", response_model=UserResponse)
-# def get_user_mongo(user_id: str):
-#     """Fetch a user from MongoDB"""
-#     user = mongo_collection.find_one({"_id": user_id})
-#     if not user:
-#         raise HTTPException(status_code=404, detail="User not found")
-#
-#     # Log the user retrieval
-#     print(f"User found in MongoDB: {user}")
-#     return UserResponse(id=user["_id"], name=user["name"], email=user["email"], phone=user["phone"])
-#
-#
-# @app.get("/transactions/mongo/{user_id}", response_model=list)
-# def get_transactions_mongo(user_id: str):
-#     """Fetch transactions related to a user from MongoDB"""
-#     transactions = transactions_collection.find({"user_id": user_id})
-#     if not transactions:
-#         raise HTTPException(status_code=404, detail="Transactions not found")
-#
-#     # Log the transaction retrieval
-#     print(f"Transactions found for user {user_id}: {list(transactions)}")
-#     return list(transactions)
-#
-#
-# @app.get("/users/mongo/{user_id}", response_model=UserResponse)
-# def get_user_mongo(user_id: str):
-#     """Fetch a user from MongoDB"""
-#     user = mongo_collection.find_one({"_id": user_id})
-#     if not user:
-#         raise HTTPException(status_code=404, detail="User not found")
-#
-#     return UserResponse(id=user["_id"], name=user["name"], email=user["email"], phone=user["phone"])
-#
-#
-# @app.delete("/users/mongo/{user_id}", response_model=dict)
-# def delete_user_mongo(user_id: str):
-#     """Delete a user from MongoDB"""
-#     result = mongo_collection.delete_one({"_id": user_id})
-#     if result.deleted_count == 0:
-#         raise HTTPException(status_code=404, detail="User not found")
-#     return {"message": "User deleted successfully"}
-#
-#
-# @app.put("/users/mongo/{user_id}", response_model=UserResponse)
-# def update_user_mongo(user_id: str, request: UserCreateRequest):
-#     """Update user details in MongoDB"""
-#     user = mongo_collection.find_one({"_id": user_id})
-#     if not user:
-#         raise HTTPException(status_code=404, detail="User not found")
-#
-#     updated_user = {
-#         "name": request.name,
-#         "email": request.email,
-#         "phone": request.phone
-#     }
-#
-#     mongo_collection.update_one({"_id": user_id}, {"$set": updated_user})
-#     return {**updated_user, "id": user_id}
 
 @app.post("/transactions/mongo/", response_model=dict)
 def create_transactions_mongo(request: UserCreateRequest):
@@ -350,8 +355,67 @@ if __name__ == "__main__":
     db.refresh(sql_user)
     print(f"Updated User in SQL: {sql_user.user_id}, {sql_user.name}")
 
+
+    # Creating an Account
+    print("Creating Account in SQL...")
+    account = Account(user_id=sql_user.user_id,bank_name="HSBC",account_number="1234567890",ifsc_code="40-33-30", account_type="Savings", balance=10000)
+    db.add(account)
+    db.commit()
+    db.refresh(account)
+    print(f"Account created in SQL: {account.account_id}, {account.account_number}")
+
+    # Fetching the Account
+    print("Fetching Account from SQL...")
+    fetched_account = db.query(Account).filter(Account.account_id == account.account_id).first()
+    print(
+        f"Account found in SQL: {fetched_account.account_id}, {fetched_account.account_number}, {fetched_account.account_type}, {fetched_account.balance}")
+
+    # Updating the Account
+    print("Updating Account in SQL...")
+    fetched_account.balance = 15000  # Updating balance
+    db.commit()
+    db.refresh(fetched_account)
+    print(
+        f"Updated Account in SQL: {fetched_account.account_id}, {fetched_account.account_number}, New Balance: {fetched_account.balance}")
+
+    # Creating UPI Mapping for the Account
+    print("Creating UPI Mapping for Account...")
+    upi_mapping = UPI_Mapping(account_id=account.account_id, upi_id="upixyz123", user_id=sql_user.user_id)
+    db.add(upi_mapping)
+    db.commit()
+    db.refresh(upi_mapping)
+    print(
+        f"UPI Mapping created for Account: {upi_mapping.account_id}, UPI ID: {upi_mapping.upi_id}, USER Id: {sql_user.user_id}")
+
+    # Fetching UPI Mapping for the Account
+    print("Fetching UPI Mapping from SQL...")
+    fetched_upi_mapping = db.query(UPI_Mapping).filter(UPI_Mapping.account_id == account.account_id).first()
+    print(
+        f"UPI Mapping found: {fetched_upi_mapping.account_id}, UPI ID: {fetched_upi_mapping.upi_id}, UPI Name: {fetched_upi_mapping.user_id}")
+
+    # Updating UPI Mapping
+    print("Updating UPI Mapping in SQL...")
+    fetched_upi_mapping.upi_name = "John Updated UPI"
+    db.commit()
+    db.refresh(fetched_upi_mapping)
+    print(f"Updated UPI Mapping: {fetched_upi_mapping.upi_id}, {fetched_upi_mapping.upi_name}")
+
+    # Deleting UPI Mapping
+    print("Deleting UPI Mapping from SQL...")
+    db.delete(fetched_upi_mapping)
+    db.commit()
+
+    # Deleting the Account
+    print("Deleting Account from SQL...")
+    db.delete(fetched_account)
+    db.commit()
+    print(f"Account deleted from SQL: {fetched_account.account_id}")
+
     print("Deleting user from SQL...")
     db.delete(sql_user)
+
+    print(f"UPI Mapping deleted: {fetched_upi_mapping.upi_id}")
+
     db.commit()
     print(f"User deleted from SQL: {sql_user.user_id}")
 
