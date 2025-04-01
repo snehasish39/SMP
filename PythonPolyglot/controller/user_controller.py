@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException, Depends
 from sqlalchemy.orm import Session
-from models import User
-from persistence.sql_repo import SQLUserRepository.SQLUserRepository
+from models import upi_transation_model
+from persistence.sql_repo import SQLUserRepository,SQLUserRepository
 from pydantic import BaseModel
 from database import SessionLocal  # Assuming SessionLocal is your DB session function
 
@@ -15,6 +15,20 @@ def get_db():
     finally:
         db.close()
 
+class UserCreateRequest(BaseModel):
+    name: str
+    email: str
+    phone: str
+
+class UserResponse(BaseModel):
+    id: int
+    name: str
+    email: str
+    phone: str
+
+    class Config:
+        orm_mode = True
+
 @app.post("/users/", response_model=UserResponse)
 def create_user(request: UserCreateRequest, db: Session = Depends(get_db)):
     user_repo = SQLUserRepository(db)
@@ -26,7 +40,7 @@ def create_user(request: UserCreateRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Phone number already exists.")
 
     # Create a new User instance
-    new_user = User(
+    new_user = upi_transation_model(
         name=request.name,
         email=request.email,
         phone=request.phone
