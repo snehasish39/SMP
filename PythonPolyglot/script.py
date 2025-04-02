@@ -37,12 +37,14 @@ class Account(Base):
     sort_code = Column(String, nullable=False)
     balance = Column(Numeric(12,2), default=0.00)
     account_type = Column(String, nullable=False)  # Add this line
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 class UPI_Mapping(Base):
     __tablename__ = "UPI_Mappings"
     upi_id = Column(String, primary_key=True)
     user_id = Column(UNIQUEIDENTIFIER, ForeignKey("users.user_id"), nullable=False)
     account_id = Column(UNIQUEIDENTIFIER, ForeignKey("Accounts.account_id"), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 class Transaction(Base):
     __tablename__ = "Transactions"
@@ -51,6 +53,7 @@ class Transaction(Base):
     receiver_upi_id = Column(String, ForeignKey("UPI_Mappings.upi_id"), nullable=False)
     amount = Column(Numeric(12,2), nullable=False)
     txn_status = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 # Create tables in the database
 Base.metadata.create_all(bind=engine)
@@ -112,6 +115,32 @@ def get_db():
         yield db
     finally:
         db.close()
+
+# # --------------------------- SHOW DATA ------------------------------------
+#
+# @app.get("/users/sql/", response_model=list[UserResponse])
+# def get_all_users_sql(db: Session = Depends(get_db)):
+#     """Fetch all users from SQL database"""
+#     usersdata = db.query(SQLUser).all()
+#     return usersdata
+#
+# @app.get("/accounts/sql/")
+# def get_all_accounts_sql(db: Session = Depends(get_db)):
+#     """Fetch all accounts from SQL database"""
+#     Accounts = db.query(Account).all()
+#     return Accounts
+#
+# @app.get("/upi_mappings/sql/")
+# def get_all_upi_mappings_sql(db: Session = Depends(get_db)):
+#     """Fetch all UPI mappings from SQL database"""
+#     Upi_mappings = db.query(UPI_Mapping).all()
+#     return Upi_mappings
+#
+# @app.get("/transactions/sql/")
+# def get_all_transactions_sql(db: Session = Depends(get_db)):
+#     """Fetch all transactions from SQL database"""
+#     Transactions = db.query(Transaction).all()
+#     return Transactions
 
 
 # --------------------------- SQL CRUD Operations ---------------------------
@@ -335,6 +364,44 @@ if __name__ == "__main__":
     # This will start the FastAPI app and perform CRUD actions
     uvicorn.run("script:app", host="127.0.0.1", port=8000, reload=True)
 
+    db: Session = SessionLocal()
+    # For the data's present in the database
+    from tabulate import tabulate
+
+    # Fetch data from the database
+    usersData = db.query(SQLUser).all()
+    accountsData = db.query(Account).all()
+    upimappingData = db.query(UPI_Mapping).all()
+    transactionsData = db.query(Transaction).all()
+
+    # Format User data
+    user_table = [[user.user_id, user.name, user.email] for user in usersData]
+    print("Data present in Users table:")
+    print(tabulate(user_table, headers=["User ID", "Name", "Email"], tablefmt="grid"))
+
+    # Format Accounts data
+    account_table = [
+        [acc.account_id, acc.user_id, acc.bank_name, acc.account_number, acc.sort_code, acc.balance, acc.created_at] for
+        acc in accountsData]
+    print("\nData present in Accounts table:")
+    print(tabulate(account_table,
+                   headers=["Account ID", "User ID", "Bank Name", "Account Number", "Sort Code", "Balance",
+                            "Created At"], tablefmt="grid"))
+
+    # Format UPI Mapping data
+    upi_table = [[upi.upi_id, upi.user_id, upi.account_id, upi.created_at] for upi in upimappingData]
+    print("\nData present in UPI Mappings table:")
+    print(tabulate(upi_table, headers=["UPI ID", "User ID", "Account ID", "Created At"], tablefmt="grid"))
+
+    # Format Transactions data
+    transaction_table = [
+        [txn.txn_id, txn.sender_upi_id, txn.receiver_upi_id, txn.amount, txn.txn_status, txn.created_at] for txn in
+        transactionsData]
+    print("\nData present in Transactions table:")
+    print(tabulate(transaction_table,
+                   headers=["Transaction ID", "Sender UPI ID", "Receiver UPI ID", "Amount", "Status", "Created At"],
+                   tablefmt="grid"))
+
     # For testing the CRUD operations
     # SQL CRUD
     print("Creating user in SQL...")
@@ -358,7 +425,7 @@ if __name__ == "__main__":
 
     # Creating an Account
     print("Creating Account in SQL...")
-    account = Account(user_id=sql_user.user_id,bank_name="HSBC",account_number="1234567890",sort_code="40-33-30", account_type="Savings", balance=10000)
+    account = Account(user_id=sql_user.user_id,bank_name="HSBC",account_number="5234567890",sort_code="40-33-30", account_type="Savings", balance=10000)
     db.add(account)
     db.commit()
     db.refresh(account)
