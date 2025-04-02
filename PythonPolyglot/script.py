@@ -34,7 +34,7 @@ class Account(Base):
     user_id = Column(UNIQUEIDENTIFIER, ForeignKey("users.user_id"), nullable=False)
     bank_name = Column(String, nullable=False)
     account_number = Column(String, unique=True, nullable=False)
-    ifsc_code = Column(String, nullable=False)
+    sort_code = Column(String, nullable=False)
     balance = Column(Numeric(12,2), default=0.00)
     account_type = Column(String, nullable=False)  # Add this line
 
@@ -358,7 +358,7 @@ if __name__ == "__main__":
 
     # Creating an Account
     print("Creating Account in SQL...")
-    account = Account(user_id=sql_user.user_id,bank_name="HSBC",account_number="1234567890",ifsc_code="40-33-30", account_type="Savings", balance=10000)
+    account = Account(user_id=sql_user.user_id,bank_name="HSBC",account_number="1234567890",sort_code="40-33-30", account_type="Savings", balance=10000)
     db.add(account)
     db.commit()
     db.refresh(account)
@@ -488,7 +488,3 @@ if __name__ == "__main__":
     mongo_collection.update_one({"_id": mongo_user_id}, {"$set": {"name": "Alice Updated"}})
     print(f"Updated User in MongoDB: {mongo_user_id}, Alice Updated")
 
-    # print("Deleting user and transactions from MongoDB...")
-    # mongo_collection.delete_one({"_id": mongo_user_id})
-    # transactions_collection.delete_many({"user_id": mongo_user_id})
-    # print(f"User and transactions deleted from MongoDB.")
