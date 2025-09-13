@@ -1,5 +1,6 @@
 #Functions for prediction and plotting results
 
+
 import matplotlib.pyplot as plt
 
 def predict(model, X):

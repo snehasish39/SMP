@@ -25,6 +25,7 @@ if __name__ == '__main__':
 
     # Predict and Evaluate
     predicted = predict(model, X_test)
+
     import numpy as np
     real_prices = scaler.inverse_transform(y_test.reshape(-1, 1))
     predicted_prices = scaler.inverse_transform(predicted)

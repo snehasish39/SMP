@@ -4,6 +4,7 @@ import yfinance as yf
 import pandas as pd
 from sklearn.preprocessing import MinMaxScaler
 
+
 csv_file = "/Users/snehasish/Documents/archive/stocks/AAME.csv"
 def load_csv_data(csv_path):
     df = pd.read_csv(csv_path)

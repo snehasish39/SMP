@@ -1,6 +1,6 @@
 #Model architecture, compile, and training functions
 
-from tensorflow.keras.models import Sequential
+from tenlssorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense, Dropout
 
 def build_lstm_model(input_shape):
